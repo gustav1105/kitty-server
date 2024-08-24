@@ -1,68 +1,40 @@
 -module(kitty_server).
 -export([start_link/0, order_cat/4, return_cat/2, close_shop/1]).
--record(cat, {name="", color=white, description=""}).
+-export([init/1, handle_call/3, handle_cast/2]).
 
-start_link() ->
-	spawn_link(fun init/0).
+-record(cat, {name, color=white, description}).
+
+start_link() -> my_server:start_link(?MODULE, []).
 
 order_cat(Pid, Name, Color, Description)->
-	Ref = erlang:monitor(process,Pid),
-	Pid ! {self(), Ref, {order, Name, Color, Description}},
-	receive
-		{Ref, Cat = #cat{}} ->
-			erlang:demonitor(Ref, [flush]),
-			Cat;
-		{'DOWN', Ref, process, Pid, Reason} ->
-			erlang:error(Reason)
-	after 5000 ->
-			  erlang:error(timeout)
-	end.
+	my_server:call(Pid, {Name, Color, Description}).
 
 return_cat(Pid, Cat = #cat{}) ->
-	Pid ! {return, Cat},
-	ok.
+	my_server:cast(Pid, {return, Cat}).
 
 close_shop(Pid) ->
-	Ref = erlang:monitor(process, Pid),
-	Pid ! {self(), Ref, terminate},
-	receive
-		{Ref, ok} ->
-			erlang:demonitor(Ref, [flush]),
-			ok;
-		{'DOWN', Ref, process, Pid, Reason} ->
-			erlang:error(Reason)
-	after
-		5000 ->
-			erlang:error(timeout)
-	end.
+	my_server:call(Pid, terminate).
 
-init() ->
-    io:format("Initializing kitty_server~n"),
-    loop([]).
+init([]) -> [].
 
-loop(Cats) ->
-	receive
-		{Pid, Ref, {order,Name, Color, Description}} ->
-			if Cats =:= [] ->
-				   Pid ! {[Ref, make_cat(Name, Color, Description)]},
-				   loop(Cats);
-			   Cats =/= [] ->
-				   Pid ! {Ref, hd(Cats)}, % : )
-				   loop(tl(Cats))
-			end;
-		{return, Cat = #cat{}} ->
-			loop([Cat | Cats]);
-		{Pid, Ref, terminate} ->
-			Pid ! {Ref, ok},
-			terminate(Cats);
-		Unknown ->
-			io:format("Unknown message: ~p~n", [Unknown]),
-			loop(Cats)
-	end.
+handle_call({order, Name, Color, Description}, From, Cats) ->
+	if Cats =:= [] ->
+		   my_server:reply(From, make_cat(Name, Color, Description)),
+		   Cats;
+	   Cats =/= [] ->
+		   my_server:reply(From, hd(Cats)),
+		   tl(Cats)
+	end;
+handle_call(terminate, From, Cats) ->
+	my_server:reply(From, ok),
+	terminate(Cats).
+
+handle_cast({return, Cat = #cat{}}, Cats) ->
+	[Cat | Cats].
 
 make_cat(Name, Col, Desc) ->
 				   #cat{name=Name, color=Col, description=Desc}.
 
 terminate(Cats) ->
 	[io:format("~p was set free ~n", [C#cat.name]) || C <- Cats],
-	ok.
+	exit(normal).
